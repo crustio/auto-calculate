@@ -1,0 +1,20 @@
+{
+  "name": "auto-calculate",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "license": "MIT",
+  "scripts": {
+    "start": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "@crustio/type-definitions": "1.2.0",
+    "@polkadot/api": "4.2.2-4",
+    "@types/bluebird": "^3.5.37",
+    "@types/node": "^14.14.31",
+    "bluebird": "^3.7.2",
+    "lodash": "^4.17.21",
+    "ts-node": "^8.6.2",
+    "typescript": "^3.7.5",
+    "winston": "^3.8.2"
+  }
+}
