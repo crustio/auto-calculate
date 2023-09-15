@@ -3,13 +3,16 @@ import { BlockHash, Header, Extrinsic, EventRecord } from '@polkadot/types/inter
 import { typesBundleForPolkadot } from '@crustio/type-definitions';
 import { UnsubscribePromise } from '@polkadot/api/types';
 import { Folder, hexToString, logger, sleep } from './utils';
+import { Keyring } from '@polkadot/keyring';
 
 export default class ChainApi {
-    private readonly endponit: string;
+    private readonly endpoint: string;
+    private readonly seed: string;
     private api!: ApiPromise;
 
-    constructor(endponit: string) {
-        this.endponit = endponit;
+    constructor(endpoint: string, seed: string) {
+        this.endpoint = endpoint;
+        this.seed = seed;
     }
 
     async init(): Promise<void> {
@@ -18,7 +21,7 @@ export default class ChainApi {
         }
 
         this.api = new ApiPromise({
-            provider: new WsProvider(this.endponit),
+            provider: new WsProvider(this.endpoint),
             typesBundle: typesBundleForPolkadot,
         });
 
@@ -56,80 +59,34 @@ export default class ChainApi {
         return this.api;
     }
 
-    /// READ methods
-    /**
-     * Register a pubsub event, dealing with new block
-     * @param handler handling with new block
-     * @returns unsubscribe signal
-     * @throws ApiPromise error
-     */
-    async subscribeNewHeads(handler: (b: Header) => void): UnsubscribePromise {
-        // Waiting for API
-        while (!(await this.withApiReady())) {
-            logger.info('[Chain] Connection broken, waiting for chain running.');
-            await sleep(6000); // IMPORTANT: Sequential matters(need give time for create ApiPromise)
-            this.init(); // Try to recreate api to connect running chain
-        }
-
-        // Waiting for chain synchronization
-        while (await this.isSyncing()) {
-            logger.info(
-                `[Chain] Chain is synchronizing, current block number ${(
-                    await this.header()
-                ).number.toNumber()}`,
-            );
-            await sleep(6000);
-        }
-
-        // Subscribe finalized event
-        return await this.api.rpc.chain.subscribeFinalizedHeads((head: Header) =>
-            handler(head),
-        );
-    }
-
-    async getBlockHash(blockNum: number): Promise<BlockHash> {
-        return this.api.rpc.chain.getBlockHash(blockNum);
-    }
-
-    async parseNewFolders(blockHash: string, blockNum: number): Promise<Folder[]> {
-        await this.withApiReady();
-        try {
-            const block = await this.api.rpc.chain.getBlock(blockHash);
-            const exs: Extrinsic[] = block.block.extrinsics;
-            const ers: EventRecord[] = await this.api.query.system.events.at(blockHash);
-            const newFolders: Folder[] = [];
-
-            for (const { event: { data, method }, phase, } of ers) {
-                if (method === 'FileSuccess') {
-                    if (data.length < 2) {
-                        continue
-                    };
-
-                    // Find new successful file order from extrinsincs
-                    const exIdx = phase.asApplyExtrinsic.toNumber();
-                    const ex = exs[exIdx];
-                    const exData = ex.method.args as any;
-                    // "0x666f6c646572" is 'folder'
-                    if (exData[3] == "0x666f6c646572") {
-                        const size = exData[1].toNumber() / 1024 / 1024;
-                        if (size == 0) {
-                            logger.info(`[chain] New folder find: ${hexToString(data[1].toString())}, size < 1MB`)
-                        } else {
-                            logger.info(`[chain] New folder find: ${hexToString(data[1].toString())}, size: ${size} MB`)
+    async calculateReward(cid: string) {
+        // 1. Construct add-prepaid tx
+        const tx = this.api.tx.market.calculateReward(cid);
+    
+        // 2. Load seeds(account)
+        const kr = new Keyring({ type: 'sr25519' });
+        const krp = kr.addFromUri(this.seed);
+    
+        // 3. Send transaction
+        await this.api.isReadyOrError;
+        return new Promise((resolve, reject) => {
+            tx.signAndSend(krp, ({events = [], status}) => {
+                console.log(`💸  Tx status: ${status.type}, nonce: ${tx.nonce}`);
+    
+                if (status.isInBlock) {
+                    events.forEach(({event: {method, section}}) => {
+                        if (method === 'ExtrinsicSuccess') {
+                            console.log(`✅  Add prepaid success!`);
+                            resolve(true);
                         }
-                        newFolders.push({
-                            cid: hexToString(data[1].toString()),
-                            size: size,
-                            blockNum: blockNum
-                        });
-                    }
+                    });
+                } else {
+                    // Pass it
                 }
-            }
-            return newFolders;
-        } catch (err) {
-            logger.error(`[chain] Parse folder error at block(${blockNum}): ${err}`);
-            return [];
-        }
+            }).catch(e => {
+                reject(e);
+            })
+        });
     }
 
     async isSyncing(): Promise<boolean> {
@@ -148,27 +105,11 @@ export default class ChainApi {
         return res;
     }
 
-    async replicaCount(cid: string): Promise<number> {
-        const file: any = await this.api.query.market.files(cid); // eslint-disable-line
-        if (file.isEmpty) {
-            return 0;
-        }
-        const fi = file.toJSON() as any; // eslint-disable-line
-        return fi.amount.toNumber();
-    }
-
-
     async header(): Promise<Header> {
         return this.api.rpc.chain.getHeader();
     }
 
-    private async withApiReady(): Promise<boolean> {
-        try {
-            await this.api.isReadyOrError;
-            return true;
-        } catch (e) {
-            logger.error(`[chain] Error connecting with Chain: %s`, e);
-            return false;
-        }
+    async blockNumber(): Promise<number> {
+        return (await this.api.rpc.chain.getHeader()).number.toNumber();
     }
 }
