@@ -39,7 +39,7 @@ export default class Subscan {
 
             // Deal
             const renewData: RenewData = response.data.data;
-            if (renewData.list == null) {
+            if (renewData == null || renewData.list == null) {
                 logger.error(`[subscan]: get null list`)
                 return { list: [], nextPage: false }
             } else {

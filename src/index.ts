@@ -1,4 +1,4 @@
-import { logger } from './utils';
+import { logger, sleep } from './utils';
 import ChainApi from './chain';
 import Subscan from './subscan';
 
@@ -29,15 +29,34 @@ async function main() {
 
     // Main loop
     while(true) {
-        const blockNumber = await chain.blockNumber();
-        logger.info(`[global]: New loop begin, current base block is ${blockNumber}`)
-        let goNextPage = true;
-        while (goNextPage) {
-            subscan.renewList(5, 0, blockNumber);
+        // Block number
+        let blockNumber = 0;
+        try {
+            blockNumber = await chain.blockNumber();
+        } catch (error) {
+            logger.error(`[chain]: Get block number error: ${error}`);
         }
+        logger.info(`[global]: New loop begin, current base block is ${blockNumber}`)
         
+        // Deal loop
+        let nextPage = true;
+        let page = 0;
+        while (nextPage) {
+            logger.info(`[global]: Deal page ${page + 1} ...`)
+            const res = await subscan.renewList(100, page, blockNumber);
+            nextPage = res.nextPage;
+            for (let index = 0; index < res.list.length; index++) {
+                const cid = res.list[index];
+                logger.info(`[global]: Deal file ${cid}`)
+                try {
+                    await chain.calculateReward(cid);
+                } catch (error) {
+                    logger.error(`[chain]: Calculate reward error: ${error}`);
+                }
+                await sleep(6 * 1000);
+            }
+        }
     }
-    
 }
 
 main()
